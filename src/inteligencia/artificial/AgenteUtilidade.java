@@ -17,6 +17,9 @@ public class AgenteUtilidade {
     private CelulaUtilidade[][] modeloInterno;
     private boolean chegouObjetivo;
     private boolean completamenteObservavel;
+    private int custoTotal;
+    private Random rand;
+    private int prevX, prevY;
     
     public AgenteUtilidade(int startX, int startY, int goalX, int goalY, int n, CelulaUtilidade[][] gridReal, boolean completamenteObservavel) {
         this.x = startX;
@@ -28,12 +31,16 @@ public class AgenteUtilidade {
         this.completamenteObservavel = completamenteObservavel;
         this.chegouObjetivo = false;
         this.modeloInterno = new CelulaUtilidade[n][n];
+        this.custoTotal = 0;
         for (int i = 0; i < n; i++) {
             for (int j = 0; j < n; j++) {
                 modeloInterno[i][j] = new CelulaUtilidade(1);
             }
         }
         marcarPosicaoAtual();
+        this.rand = new Random();
+        this.prevX = -1;
+        this.prevY = -1;
     }
     
     private void atualizarModelo() {
@@ -58,26 +65,38 @@ public class AgenteUtilidade {
     }
     
     public boolean mover() {
-            atualizarModelo();
+        atualizarModelo();
+        modeloInterno[x][y].setCusto(gridReal[x][y].getCusto());
+        modeloInterno[x][y].setVisitada(true);
         if (x == goalX && y == goalY) {
             chegouObjetivo = true;
             System.out.println("Objetivo alcancado em (" + x + ", " + y + ") com custo total minimo");
             return true;
         }
-        int[] proximo = aStarProximoMovimento();
+        int[] proximo;
+        if (completamenteObservavel) {
+            proximo = aStarProximoMovimento();
+        } else {
+            proximo = localProximoMovimento();
+        }
         if (proximo == null) {
             System.out.println("Nao foi possivel encontrar o caminho");
             return false;
         }
+        int oldX = x;
+        int oldY = y;
         x = proximo[0];
         y = proximo[1];
+        custoTotal += gridReal[x][y].getCusto();
         marcarPosicaoAtual();
         if (x == goalX && y == goalY) {
             chegouObjetivo = true;
-            System.out.println("Objetivo alcancado em (" + x + ", " + y + ")");
+            System.out.println("Objetivo alcancado em (" + x + ", " + y + ") com custo total: " + custoTotal);
         } else {
-            System.out.println("Movendo para (" + x + ", " + y + ")");
+            System.out.println("Movendo para (" + x + ", " + y + ") | Custo acumulado: " + custoTotal);
         }
+        prevX = oldX;
+        prevY = oldY;
         return true;
     }
     
@@ -93,6 +112,8 @@ public class AgenteUtilidade {
         while (!openSet.isEmpty()) {
             Node current = openSet.poll();
             int cx = current.x, cy = current.y;
+            if (visitado[cx][cy]) continue;
+            visitado[cx][cy] = true;
             String currKey = cx + "," + cy;
             if (cx == goalX && cy == goalY) {
                 return reconstruirProximoPasso(cameFrom);
@@ -102,29 +123,66 @@ public class AgenteUtilidade {
                 int nx = cx + d[0], ny = cy + d[1];
                 if (nx < 0 || nx >= n || ny < 0 || ny >= n) continue;
                 CelulaUtilidade cel;
-                if (completamenteObservavel) {
-                    cel = gridReal[nx][ny];
-                } else {
-                    cel = modeloInterno[nx][ny];
-                    if (!cel.isVisitada()) {
-                        cel = new CelulaUtilidade(1);
-                    }
-                }
-                if (cel.isBloqueada() || visitado[nx][ny]) continue;
+                cel = gridReal[nx][ny];
+                if (cel.isBloqueada()) continue;
                 int tentativeG = gScore.getOrDefault(currKey, Integer.MAX_VALUE) + cel.getCusto();
                 String neighKey = nx + "," + ny;
                 if (tentativeG < gScore.getOrDefault(neighKey, Integer.MAX_VALUE)) {
                     cameFrom.put(neighKey, current);
                     gScore.put(neighKey, tentativeG);
-                    int custoMinimo = 1;
-                    int f = tentativeG + (manhattan(nx, ny) * custoMinimo);
+                    int f = tentativeG + (manhattan(nx, ny));
                     openSet.add(new Node(nx, ny, tentativeG, f));
-                    visitado[nx][ny] = true;
                 }
             }
         }
         return null;
     }
+    
+        private int[] localProximoMovimento() {
+            int[][] dirs = {
+                {1, 0},
+                {0, 1},
+                {0, -1},
+                {-1, 0}
+            };
+            List<int[]> candidates = new ArrayList<>();
+            int minCusto = Integer.MAX_VALUE;
+            for (int[] d : dirs) {
+                int nx = x + d[0];
+                int ny = y + d[1];
+                if (nx < 0 || nx >= n || ny < 0 || ny >= n) continue;
+                CelulaUtilidade cel = modeloInterno[nx][ny];
+                if (cel.isBloqueada()) continue;
+                int custoVizinho = cel.getCusto();
+                if (custoVizinho < minCusto) {
+                    minCusto = custoVizinho;
+                    candidates.clear();
+                    candidates.add(new int[]{nx, ny});
+                } else if (custoVizinho == minCusto) {
+                    candidates.add(new int[]{nx, ny});
+                }
+            }
+            if (candidates.isEmpty()) return null;
+            boolean hasPrev = (prevX != -1 && prevY != -1);
+            if (hasPrev && candidates.size() > 1) {
+                candidates.removeIf(p -> p[0] == prevX && p[1] == prevY);
+            }
+            if (candidates.size() == 1) {
+                return candidates.get(0);
+            }
+            for (int[] p : candidates) {
+                if (p[0] == x + 1 && p[1] == y) {
+                    return p;
+                }
+            }
+            candidates.sort((a, b) -> {
+                int da = Math.abs(a[0] - x) + Math.abs(a[1] - y);
+                int priorityA = (a[1] > y) ? 0 : (a[1] < y) ? 1 : 2;
+                int priorityB = (b[1] > y) ? 0 : (b[1] < y) ? 1 : 2;
+                return Integer.compare(priorityA, priorityB);
+            });
+            return candidates.get(0);
+        }
     
     private int[] reconstruirProximoPasso(Map<String, Node> cameFrom) {
         int cx = goalX, cy = goalY;
@@ -160,6 +218,10 @@ public class AgenteUtilidade {
     
     public boolean verificarVisitada(int i, int j) {
         return modeloInterno[i][j].isVisitada();
+    }
+
+    public int getCustoTotal() {
+        return custoTotal;
     }
     
     public static class Node implements Comparable<Node> {
